@@ -1,0 +1,160 @@
+{
+  "name": "Slack User Summary Bot (48h, incremental, tendencias)",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [300, 300],
+      "parameters": {
+        "mode": "custom",
+        "cronExpression": "30 9 */2 * *"
+      }
+    },
+    {
+      "id": "6",
+      "name": "Load Last Timestamp",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [520, 300],
+      "parameters": {
+        "functionCode": "const staticData = this.getWorkflowStaticData('global');\nconst lastTs = staticData.lastTs || 0;\nreturn [{ json: { oldest: lastTs } }];"
+      }
+    },
+    {
+      "id": "2",
+      "name": "Get Messages",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [780, 300],
+      "credentials": {
+        "slackApi": {
+          "id": "__REPLACE_SLACK_CREDENTIAL_ID__",
+          "name": "__REPLACE_SLACK_CREDENTIAL_NAME__"
+        }
+      },
+      "parameters": {
+        "operation": "conversationGet",
+        "conversationId": "C09TS8LUZE3",
+        "returnAll": true,
+        "additionalFields": {
+          "oldest": "={{$json[\"oldest\"]}}"
+        }
+      }
+    },
+    {
+      "id": "3",
+      "name": "Filter by User + Save Last Timestamp",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1060, 300],
+      "parameters": {
+        "functionCode": "const userId = 'U01AL8JHDS5';\nconst staticData = this.getWorkflowStaticData('global');\nconst messages = items[0].json.messages || [];\n\n// Filtrar mensajes del usuario/app\nconst userMessages = messages\n  .filter(m => m.user === userId)\n  .map(m => m.text);\n\n// Actualizar último timestamp leído\nlet lastTsStored = staticData.lastTs || 0;\nfor (const m of messages) {\n  if (m.ts) {\n    const tsNum = Number(m.ts);\n    if (!isNaN(tsNum) && tsNum > lastTsStored) {\n      lastTsStored = tsNum;\n    }\n  }\n}\nstaticData.lastTs = lastTsStored;\n\nreturn [{ json: { texts: userMessages } }];"
+      }
+    },
+    {
+      "id": "4",
+      "name": "Summarize with OpenAI",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1340, 300],
+      "credentials": {
+        "openAIApi": {
+          "id": "__REPLACE_OPENAI_CREDENTIAL_ID__",
+          "name": "__REPLACE_OPENAI_CREDENTIAL_NAME__"
+        }
+      },
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4o-mini",
+        "messages": [
+          {
+            "role": "system",
+            "text": "Eres un analista que resume y detecta tendencias en conversaciones de Slack. Siempre respondes en español, de forma clara y estructurada. Si la evidencia es limitada, lo indicas explícitamente."
+          },
+          {
+            "role": "user",
+            "text": "Estos son mensajes recientes (últimas ejecuciones de 48 horas) de un mismo usuario/app en Slack:\\n\\n{{$json.texts.join(\"\\n\")}}\\n\\nCon esta información, responde exactamente en el siguiente formato, usando texto plano y bullets concisos:\\n\\n1) RESUMEN ÚLTIMAS 48 HORAS\\n- Resume de forma concisa los temas principales, problemas, decisiones o insights importantes que aparecen en los mensajes recientes.\\n\\n2) TENDENCIAS SEMANALES\\n- Indica posibles patrones o tendencias que parezcan sostenerse durante la última semana (aunque solo veas esta muestra reciente). Puedes inferir, pero si la base es muy limitada, escribe literalmente: \"Sin información suficiente para tendencias semanales\".\\n\\n3) TENDENCIAS MENSUALES\\n- Señala temas que podrían ser tendencia del último mes (problemas repetidos, solicitudes recurrentes, cambio de foco, etc.). Si no hay suficiente contexto, escribe literalmente: \"Sin información suficiente para tendencias mensuales\".\\n\\n4) INSIGHTS ACCIONABLES\\n- Entrega hasta 10 bullets con acciones concretas recomendadas (qué monitorear, qué mejorar, qué escalar o qué automatizar) basadas en lo anterior."
+          }
+        ]
+      }
+    },
+    {
+      "id": "5",
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [1620, 300],
+      "credentials": {
+        "slackApi": {
+          "id": "__REPLACE_SLACK_CREDENTIAL_ID__",
+          "name": "__REPLACE_SLACK_CREDENTIAL_NAME__"
+        }
+      },
+      "parameters": {
+        "operation": "post",
+        "channelId": "C09TS8LUZE3",
+        "text": "Resumen automático (últimos mensajes de <@U01AL8JHDS5>):\\n\\n{{$json[\"choices\"][0][\"message\"] || $json[\"data\"] || $json[\"result\"]}}"
+      }
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Load Last Timestamp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Last Timestamp": {
+      "main": [
+        [
+          {
+            "node": "Get Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Messages": {
+      "main": [
+        [
+          {
+            "node": "Filter by User + Save Last Timestamp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter by User + Save Last Timestamp": {
+      "main": [
+        [
+          {
+            "node": "Summarize with OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize with OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Post to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false
+}
